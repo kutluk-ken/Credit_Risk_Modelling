@@ -1,5 +1,5 @@
 # Credit Risk Case Study
-
+![7Soj](https://user-images.githubusercontent.com/56012015/230990960-a2e14f3e-a1e0-435a-a2a7-196620da7f66.gif)
 ## Abstract
 The German credit dataset, donated by Professor Hans Hofmann via the European Statlog project and available on the [UCI Machine
 Learning Repository](https://archive.ics.uci.edu/ml/datasets/South+German+Credit+%28UPDATE%29), has been widely used in machine learning research. However, upon closer inspection, the dataset was found to
@@ -33,10 +33,11 @@ creditworthiness. The output is displayed to the user, indicating whether the cl
 classified as good or bad.<br>
 Overall, the R Shiny app provides a convenient and user-friendly way to predict credit risk
 and can be a valuable tool for financial institutions, credit unions, and other organizations that
-need to make decisions about lending and credit.
-  
-  ## Files
-  File Creditrisk_final.rmd contains data visalisation, preprocessing steps and everything needed to be done in order to find the best model.<br>
-  File app.r is the R shiny app for credit risk predictor.
+need to make decisions about lending and credit.<br>
+
+![7MyJ](https://user-images.githubusercontent.com/56012015/230990998-4dda2c1e-f687-4924-b45e-9c269af35fd8.gif)<br>
+## Files
+* **Creditrisk_final.rmd** contains data visalisation, preprocessing steps and everything needed to be done in order to find the best model.<br>
+* **app.r** is the R shiny app for credit risk predictor.
   
 

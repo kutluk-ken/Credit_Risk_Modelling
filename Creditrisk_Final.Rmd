@@ -1,0 +1,603 @@
+---
+title: "Credit Risk"
+author: "Kutluk(Ken) Anwar"
+output: html_document
+---
+
+```{r, include=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidyverse)
+library(readr)
+library(pROC)
+library(MASS)
+library(ResourceSelection)
+#library(randomForest)
+library(cowplot)
+library(corrplot)
+library(DataExplorer)
+library(ggplot2)
+
+library(gridExtra)
+library(formattable)
+```
+
+
+
+
+# Reading in original dataset
+```{r}
+df1 <- read_csv("Credit.csv")
+```
+
+
+#Reading in the modified dataset
+
+```{r}
+dat <- read_csv("Credit.csv")
+
+nam_fahrmeirbook <- colnames(dat)
+
+
+nam_evtree <- c("status", "duration", "credit_history", "purpose", "amount", 
+                "savings", "employment_duration", "installment_rate",
+                "personal_status_sex", "other_debtors",
+                "present_residence", "property",
+                "age", "other_installment_plans",
+                "housing", "number_credits",
+                "job", "people_liable", "telephone", "foreign_worker",
+                "credit_risk")
+names(dat) <- nam_evtree
+
+## make factors for all except the numeric variables
+## make sure that even empty level of factor purpose = verw (dat[[4]]) is included
+for (i in setdiff(1:21, c(2,4,5,13)))
+  dat[[i]] <- factor(dat[[i]])
+## factor purpose
+dat[[4]] <- factor(dat[[4]], levels=as.character(0:10))
+
+## assign level codes
+## make intrinsically ordered factors into class ordered 
+levels(dat$credit_risk) <- c("bad", "good")
+levels(dat$status) = c("no checking account",
+                         "... < 0 DM",
+                         "0<= ... < 200 DM",
+                         "... >= 200 DM / salary for at least 1 year")
+## "critical account/other credits elsewhere" was
+## "critical account/other credits existing (not at this bank)",
+levels(dat$credit_history) <- c(
+  "delay in paying off in the past",
+  "critical account/other credits elsewhere",
+  "no credits taken/all credits paid back duly",
+  "existing credits paid back duly till now",
+  "all credits at this bank paid back duly")
+levels(dat$purpose) <- c(
+  "others",
+  "car (new)",
+  "car (used)",
+  "furniture/equipment",
+  "radio/television",
+  "domestic appliances",
+  "repairs",
+  "education", 
+  "vacation",
+  "retraining",
+  "business")
+levels(dat$savings) <- c("unknown/no savings account",
+                         "... <  100 DM", 
+                         "100 <= ... <  500 DM",
+                         "500 <= ... < 1000 DM", 
+                         "... >= 1000 DM")
+levels(dat$employment_duration) <- 
+                  c(  "unemployed", 
+                      "< 1 yr", 
+                      "1 <= ... < 4 yrs",
+                      "4 <= ... < 7 yrs", 
+                      ">= 7 yrs")
+dat$installment_rate <- ordered(dat$installment_rate)
+levels(dat$installment_rate) <- c(">= 35", 
+                                  "25 <= ... < 35",
+                                  "20 <= ... < 25", 
+                                  "< 20")
+levels(dat$other_debtors) <- c(
+  "none",
+  "co-applicant",
+  "guarantor"
+)
+## female : nonsingle was female : divorced/separated/married
+##    widowed females are not mentioned in the code table
+levels(dat$personal_status_sex) <- c(
+  "male : divorced/separated",
+  "female : non-single or male : single",
+  "male : married/widowed",
+  "female : single")
+dat$present_residence <- ordered(dat$present_residence)
+levels(dat$present_residence) <- c("< 1 yr", 
+                                   "1 <= ... < 4 yrs", 
+                                   "4 <= ... < 7 yrs", 
+                                   ">= 7 yrs")
+## "building soc. savings agr./life insurance", 
+##    was "building society savings agreement/life insurance"
+levels(dat$property) <- c(
+  "unknown / no property",
+  "car or other",
+  "building soc. savings agr./life insurance", 
+  "real estate"
+)
+levels(dat$other_installment_plans) <- c(
+  "bank",
+  "stores",
+  "none"
+)
+levels(dat$housing) <- c("for free", "rent", "own")
+dat$number_credits <- ordered(dat$number_credits)
+levels(dat$number_credits) <- c("1", "2-3", "4-5", ">= 6")
+## manager/self-empl./highly qualif. employee  was
+##   management/self-employed/highly qualified employee/officer
+levels(dat$job) <- c(
+  "unemployed/unskilled - non-resident",
+  "unskilled - resident",
+  "skilled employee/official",
+  "manager/self-empl./highly qualif. employee"
+)
+levels(dat$people_liable) <- c("3 or more", "0 to 2")
+levels(dat$telephone) <- c("no", "yes (under customer name)")
+levels(dat$foreign_worker) <- c("yes", "no")
+```
+
+# EDA
+
+### Correlation matrix
+```{r}
+corrplot(cor(df1),addCoef.col="black",number.cex=0.30, type = "upper")
+#By looking at the correlation matrix, it helps us to detect multicollinearity, which will help us to do feature selections later.
+```
+Comment: The strongest correlation is between duration and amount. It is not surprising that these two variables would have a strong correlation because they are related in a fundamental way: the longer the duration of the credit, the higher the total amount borrowed is likely to be, all other things being equal. Similarly, if the borrower takes out a larger loan, it may take longer to pay off the loan.
+
+### Check if there is missing values.
+```{r}
+introduce(dat)
+plot_intro(dat)
+```
+
+###. Categorical Variables
+
+```{r}
+a <- ggplot(dat, aes(status, ..count..)) + geom_bar(aes(fill = credit_risk), position = "dodge") + theme(axis.text.x = element_text(angle =45, hjust = 1)) # --- status
+b <- ggplot(dat, aes(credit_history, ..count..)) + geom_bar(aes(fill = credit_risk), position = "dodge") + theme(axis.text.x = element_text(angle =45, hjust = 1))# --- Credit_history
+c <- ggplot(dat, aes(purpose, ..count..)) + geom_bar(aes(fill = credit_risk), position = "dodge") + theme(axis.text.x = element_text(angle =45, hjust = 1)) # --- purpose
+d <- ggplot(dat, aes(savings, ..count..)) + geom_bar(aes(fill = credit_risk), position = "dodge") + theme(axis.text.x = element_text(angle =45, hjust = 1)) # --- savings
+e <- ggplot(dat, aes(other_debtors, ..count..)) + geom_bar(aes(fill = credit_risk), position = "dodge") # --- other_debtors
+#ggplot(dat, aes(personal_status_sex, ..count..)) + geom_bar(aes(fill = credit_risk), position = "dodge") # --- personal_status_sex
+f <- ggplot(dat, aes(housing, ..count..)) + geom_bar(aes(fill = credit_risk), position = "dodge") # --- housing
+g <- ggplot(dat, aes(other_installment_plans, ..count..)) + geom_bar(aes(fill = credit_risk), position = "dodge") # --- other_installment_plans
+h <- ggplot(dat, aes(foreign_worker, ..count..)) + geom_bar(aes(fill = credit_risk), position = "dodge") # --- foreign_worker
+grid.arrange(a,b, layout_matrix=cbind(1, 2))
+grid.arrange(c,d, layout_matrix=cbind(1, 2))
+grid.arrange(e,f, layout_matrix=cbind(1, 2))
+grid.arrange(g,h, layout_matrix=cbind(1, 2))
+```
+
+Comment: Significant in variables like "savings", "purpose", "credit_history" and "status"........ (complete this with more details).
+
+###. Continious Variables and Discrete Variables
+```{r}
+par(mfrow = c(1,3))
+boxplot(dat$duration, col = "2", xlab = "Duration")
+
+#boxplot(df1$employment_duration, col = "2", xlab = "employment_duration")
+#boxplot(df1$present_residence, col = "2", xlab = "Present_residence")
+#boxżlot(df1$property, col = "2", xlab = "property")
+boxplot(df1$amount, col = "2", xlab = "Amount")
+#boxplot(df1$installment_rate, col = "2", xlab = "Installment_rate")
+boxplot(df1$age, col = "2", xlab = "Age")
+#boxplot(df1$number_credits, col = "2", xlab = "Number_credits")
+#boxplot(df1$installment_rate, col = "2", xlab = "installment_rate") Sme
+#boxplot(df1$people_liable, col = "2", xlab = "People_liable")
+
+```
+Comment: Detected outliers in "Duration", "Amount", "Age". 
+
+```{r}
+
+#duration
+a <- ggplot(dat, aes(x = credit_risk, y = duration, fill = credit_risk)) + geom_boxplot() + theme(legend.position = "none")
+#amount
+b <- ggplot(dat, aes(x = credit_risk, y = amount, fill = credit_risk)) + geom_boxplot() + theme(legend.position = "none")
+#Age
+c <- ggplot(dat, aes(x = credit_risk, y = age, fill = credit_risk)) + geom_boxplot() + theme(legend.position = "none")
+
+grid.arrange(a, b, c, layout_matrix=cbind(1, 2, 3))
+```
+Comment: We can observe from the 'age' variable that the median value of bad credit records is lower than that of good credit records, indicating that younger people tend to be riskier borrowers.
+
+In the 'duration' variable, we can see that the median value and range for bad credit records are higher than those for good credit records.
+
+Regarding the 'amount' variable, we can see that the median values for both bad and good credit records are quite similar.
+
+
+Comment: After getting rid of outliers, we are getting worse result. Now we made sure that the dataset is clean, so that we can move on to the modelling section.
+
+First, we have to deal with all the categorical variables in the dataset. We will use as.numeric() and as.factor() functions so we can have more flexibility when fitting and reducing a model.
+
+```{r, include=FALSE}
+attach(df1)
+
+#Status
+status_nochecking = as.numeric(status == 1)
+status_less_than_0_DM = as.numeric(status == 2)
+status_less_than_200_DM = as.numeric(status == 3)
+status_greater_than_200_DM = as.numeric(status == 4)
+
+# credit history
+credit_history_delay = as.numeric(credit_history == 0)
+credit_history_elsewhere = as.numeric(credit_history == 1)
+credit_history_nocredits = as.numeric(credit_history == 2)
+credit_history_existingcredits_paidback = as.numeric(credit_history == 3)
+credit_history_all_paidback = as.numeric(credit_history == 4)
+
+#purpose
+purpose_other = as.numeric(purpose == 0)
+purpose_newcar = as.numeric(purpose == 1)
+purpose_usedcar = as.numeric(purpose == 2)
+purpose_furniture = as.numeric(purpose == 3)
+purpose_tv = as.numeric(purpose == 4)
+purpose_appliance = as.numeric(purpose == 5)
+purpose_repair = as.numeric(purpose == 6)
+purpose_edu = as.numeric(purpose == 7)
+purpose_vacation = as.numeric(purpose == 8)
+purpose_retrain = as.numeric(purpose == 9)
+purpose_bus = as.numeric(purpose == 10)
+
+#savings
+savings_none = as.numeric(savings == 1)
+savings_lessthan_100DM = as.numeric(savings == 2)
+savings_lessthan_500DM = as.numeric(savings == 3)
+savings_lessthan_1000DM = as.numeric(savings == 4)
+savings_greaterthan_1000DM = as.numeric(savings == 5)
+
+#employment
+employed_none = as.numeric(employment_duration== 1)
+employed_lessthan_1yr = as.numeric(employment_duration== 2)
+employed_lessthan_4yr = as.numeric(employment_duration== 3)
+employed_lessthan_7yr = as.numeric(employment_duration== 4)
+employed_morethan_7yr= as.numeric(employment_duration== 5)
+
+#Installment rate
+installment_greaterthan_35y = as.numeric(installment_rate== 1)
+installment_25_35 = as.numeric(installment_rate== 2)
+installment_20_25 = as.numeric(installment_rate== 3)
+installment_lessthan_20y = as.numeric(installment_rate== 4)
+
+#Personal status
+personal_status_male_divorced = as.numeric(personal_status_sex== 1)
+personal_status_female_nonsingle = as.numeric(personal_status_sex== 2)
+personal_status_male_married = as.numeric(personal_status_sex== 3)
+personal_status_female_single = as.numeric(personal_status_sex== 4)
+
+#other debtors
+otherdebtors_none = as.numeric(other_debtors== 1)
+otherdebtors_coapplicant = as.numeric(other_debtors== 2)
+otherdebtors_guarantor = as.numeric(other_debtors== 3)
+
+#present residence
+presres_less_1 = as.numeric(present_residence== 1)
+presres_less_4 = as.numeric(present_residence== 2)
+presres_less_7 = as.numeric(present_residence== 3)
+presres_more_7 = as.numeric(present_residence== 4)
+
+#installment plan
+instplan_bank = as.numeric(other_installment_plans== 1)
+instplan_store= as.numeric(other_installment_plans== 2)
+instplan_none = as.numeric(other_installment_plans== 3)
+
+#housing
+housing_free = as.numeric(housing== 1)
+housing_rent = as.numeric(housing== 2)
+housing_own = as.numeric(housing== 3)
+```
+
+
+
+We then fit a full logistic binomial model with all the variables which we believe might have an effect on credit score!
+
+```{r}
+new2<-  glm(formula = credit_risk ~ status_less_than_0_DM  + status_less_than_200_DM + status_greater_than_200_DM + duration + credit_history_elsewhere + credit_history_nocredits + credit_history_existingcredits_paidback + credit_history_all_paidback + purpose_newcar + purpose_usedcar + purpose_furniture + purpose_tv + purpose_appliance+ purpose_repair + purpose_vacation + purpose_retrain + purpose_bus + amount + 
+ savings_lessthan_100DM + savings_lessthan_500DM + savings_lessthan_1000DM + savings_greaterthan_1000DM +  employed_lessthan_1yr + employed_lessthan_4yr + employed_lessthan_7yr + employed_morethan_7yr + installment_25_35 + installment_20_25 + installment_lessthan_20y +  personal_status_female_nonsingle + personal_status_male_married + personal_status_female_single + otherdebtors_coapplicant  + otherdebtors_guarantor + presres_less_4 + presres_less_7 + presres_more_7 + age +  instplan_store + instplan_none +  housing_rent + housing_own +  foreign_worker, family = "binomial", data = df1)
+```
+
+
+Reducing Model:
+
+We then try to identify ways to reduce our model as currently it has a lot of predictors! so our next approach is running R backward elimination process using step() function and fitting a new model. Doing so, we remove 17 variables that were not significant in the initial model and most of the variables left are now significant!
+
+
+Running Step function:
+
+```{r, results='hide'}
+step(new2, test = "Chisq", direction = "backward")
+```
+
+
+Our new recommended model:
+
+```{r}
+new3<-  glm(formula = credit_risk ~ status_less_than_0_DM + status_less_than_200_DM + status_greater_than_200_DM + duration + credit_history_nocredits + credit_history_existingcredits_paidback + credit_history_all_paidback + purpose_newcar + purpose_usedcar + purpose_furniture + purpose_vacation + purpose_retrain + purpose_bus + amount + savings_lessthan_1000DM + savings_greaterthan_1000DM + employed_lessthan_7yr + installment_20_25 + installment_lessthan_20y + personal_status_male_married + otherdebtors_guarantor + presres_less_4 + age + instplan_none + housing_rent + foreign_worker, family = "binomial", data = df1)
+```
+
+
+# Interaction Terms
+
+Looking back at out correlation plot, we saw few variables that had high correlation with each other such as duration and amount. We can add few interaction terms in our model which we think would benefit the accuracy of the model. As such four interaction terms were added and all of them were significant at 5% level of alpha!
+These interaction terms are:
+
+* amount:duration
+
+* history_all_paidback:age
+
+* purpose_newcar:amount
+
+* purpose_newcar:amount
+
+
+New model with interaction terms:
+
+```{r}
+new5<-  glm(formula = credit_risk ~ status_less_than_0_DM + status_less_than_200_DM + status_greater_than_200_DM + duration + credit_history_nocredits + credit_history_existingcredits_paidback + purpose_newcar + purpose_usedcar + purpose_furniture + purpose_vacation + purpose_retrain + purpose_bus + amount + savings_lessthan_1000DM + savings_greaterthan_1000DM + employed_lessthan_7yr + installment_20_25 + installment_lessthan_20y + personal_status_male_married + otherdebtors_guarantor + presres_less_4 + instplan_none + housing_rent + foreign_worker + amount:duration +  credit_history_all_paidback:age + purpose_newcar:amount + status_less_than_0_DM:savings_none, family = "binomial", data = df1)
+```
+
+
+# Residual Diagnostics
+
+Lastly we will run a test to check which observations for the model had an absolute standard Pearson Residuals greater than 3. We could count them as outliers and see if removing them from our most recent model is am improvement or not!
+
+```{r}
+std_pearson_resid <- rstandard(new5,type = "pearson")
+which(abs(std_pearson_resid) > 3)
+```
+
+Total of 17 observations were outliers, lets remove these from our model and check the accuracy of our new model!
+
+```{r, include=FALSE}
+df1$Outs<-ifelse(abs(std_pearson_resid)>3, 1, 0)
+df11<-df1[!df1$Outs,]
+
+attach(df11)
+
+#Status
+status_nochecking = as.numeric(status == 1)
+status_less_than_0_DM = as.numeric(status == 2)
+status_less_than_200_DM = as.numeric(status == 3)
+status_greater_than_200_DM = as.numeric(status == 4)
+
+# credit history
+credit_history_delay = as.numeric(credit_history == 0)
+credit_history_elsewhere = as.numeric(credit_history == 1)
+credit_history_nocredits = as.numeric(credit_history == 2)
+credit_history_existingcredits_paidback = as.numeric(credit_history == 3)
+credit_history_all_paidback = as.numeric(credit_history == 4)
+
+#purpose
+purpose_other = as.numeric(purpose == 0)
+purpose_newcar = as.numeric(purpose == 1)
+purpose_usedcar = as.numeric(purpose == 2)
+purpose_furniture = as.numeric(purpose == 3)
+purpose_tv = as.numeric(purpose == 4)
+purpose_appliance = as.numeric(purpose == 5)
+purpose_repair = as.numeric(purpose == 6)
+purpose_edu = as.numeric(purpose == 7)
+purpose_vacation = as.numeric(purpose == 8)
+purpose_retrain = as.numeric(purpose == 9)
+purpose_bus = as.numeric(purpose == 10)
+
+#savings
+savings_none = as.numeric(savings == 1)
+savings_lessthan_100DM = as.numeric(savings == 2)
+savings_lessthan_500DM = as.numeric(savings == 3)
+savings_lessthan_1000DM = as.numeric(savings == 4)
+savings_greaterthan_1000DM = as.numeric(savings == 5)
+
+#employment
+employed_none = as.numeric(employment_duration== 1)
+employed_lessthan_1yr = as.numeric(employment_duration== 2)
+employed_lessthan_4yr = as.numeric(employment_duration== 3)
+employed_lessthan_7yr = as.numeric(employment_duration== 4)
+employed_morethan_7yr= as.numeric(employment_duration== 5)
+
+#Installment rate
+installment_greaterthan_35y = as.numeric(installment_rate== 1)
+installment_25_35 = as.numeric(installment_rate== 2)
+installment_20_25 = as.numeric(installment_rate== 3)
+installment_lessthan_20y = as.numeric(installment_rate== 4)
+
+#Personal status
+personal_status_male_divorced = as.numeric(personal_status_sex== 1)
+personal_status_female_nonsingle = as.numeric(personal_status_sex== 2)
+personal_status_male_married = as.numeric(personal_status_sex== 3)
+personal_status_female_single = as.numeric(personal_status_sex== 4)
+
+#other debtors
+otherdebtors_none = as.numeric(other_debtors== 1)
+otherdebtors_coapplicant = as.numeric(other_debtors== 2)
+otherdebtors_guarantor = as.numeric(other_debtors== 3)
+
+#present residence
+presres_less_1 = as.numeric(present_residence== 1)
+presres_less_4 = as.numeric(present_residence== 2)
+presres_less_7 = as.numeric(present_residence== 3)
+presres_more_7 = as.numeric(present_residence== 4)
+
+#installment plan
+instplan_bank = as.numeric(other_installment_plans== 1)
+instplan_store= as.numeric(other_installment_plans== 2)
+instplan_none = as.numeric(other_installment_plans== 3)
+
+#housing
+housing_free = as.numeric(housing== 1)
+housing_rent = as.numeric(housing== 2)
+housing_own = as.numeric(housing== 3)
+```
+
+
+Fitting model after removing residuals
+
+```{r}
+new6<-  glm(formula = credit_risk ~ status_less_than_0_DM + status_less_than_200_DM + status_greater_than_200_DM + duration +  credit_history_nocredits + credit_history_existingcredits_paidback +purpose_newcar + purpose_usedcar + purpose_furniture + purpose_vacation + purpose_retrain + purpose_bus + amount + savings_lessthan_1000DM + savings_greaterthan_1000DM + employed_lessthan_7yr + installment_20_25 + installment_lessthan_20y + personal_status_male_married + otherdebtors_guarantor + presres_less_4 + instplan_none + housing_rent + foreign_worker + amount:duration +  credit_history_all_paidback:age + purpose_newcar:amount + status_less_than_0_DM:savings_none, family = "binomial", data = df11)
+```
+
+This will be our final model!
+
+Lets check the significance of the variables in our model!
+
+```{r,echo=FALSE}
+fe_coefs4 <- summary(new6,decreasing = TRUE)$coefficients
+fe_coefs4 
+```
+As we can see, all these variables are significant! 
+
+Just comparing the AIC value for our initial model and our final model, we see that we have successfully reduced the AIC of our latest model! 
+
+Same goes for our Residual Deviance value! ( it is important to note that the reason for high Residual Deviance is because of having an ungrouped dataset)
+
+```{r, include=FALSE}
+models <- c("Initial","Latest")
+Residual_Deviance <- c(902.13, 787.93)
+AIC <- c(990.13, 845.93)
+df <- data.frame(models, Residual_Deviance, AIC)
+```
+
+```{r}
+df
+```
+
+
+# Residual Plot
+
+Comparing the residual plot of our initial model to our final mode, we see that we were able to remove some of the influential points present in the high fitted values for our negative residuals ( the values that we overestimated)! 
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+plot(new2$residuals ~ new2$fitted.values, data = df1)
+abline(h = 0)
+plot(new6$residuals ~ new6$fitted.values, data = df11)
+abline(h = 0)
+```
+
+
+# Model Comparison
+
+We can also compare all of the models we obtained with each other to ensure that our final model obtained is infact the preferred model!
+
+First, we can compare our initial model with the reduced model (Recommended model based on step() function). Running the anova() function we get a large p value which means that we prefer our reduced model!
+
+```{r}
+a <- anova(new3, new2, test = "Chisq")
+a$`Pr(>Chi)`
+```
+
+Now, we can compare our reduced model with interaction model! Running the anova() function we get a small p value which means that we prefer the more complex model (interaction model)!
+
+```{r}
+b <- anova(new3, new5, test = "Chisq")
+b$`Pr(>Chi)`
+```
+
+
+# Model Validation
+
+Since we are dealing with ungrouped data, we can run Hosmer and Lemeshow goodness of fit (GOF) test. Running the test we fail to reject null meaning that our data fits well!
+
+```{r}
+hoslem.test(new6$y, fitted(new6),g = 55)
+```
+
+
+We can also include a classification table!
+
+```{r, echo=FALSE}
+n <- dim(df11)[1]
+prop = sum(df11$credit_risk)/n
+y <- (df11$credit_risk == 1)*1
+predicted <- as.numeric(fitted(new6) > prop)
+xtabs(~y+predicted)
+```
+
+* Sensitivity = 0.76
+
+* Concordance Rate = 0.77
+
+
+Finally, we can include an ROC Curve of our final model!
+
+```{r,echo=FALSE, warning=FALSE}
+test_roc = roc(new6$y ~ fitted(new6), plot = TRUE, print.auc = TRUE)
+```
+
+
+We get a concordance index of 0.867 which is pretty high!
+
+
+```{r}
+# Load the required libraries
+urlPackage <- "https://cran.r-project.org/src/contrib/Archive/randomForest/randomForest_4.6-12.tar.gz"
+install.packages(urlPackage, repos=NULL, type="source") 
+library(randomForest)
+library(caret)
+
+set.seed(1005740600)
+train_idx <- sample(nrow(dat), round(0.7*nrow(dat)), replace = FALSE)
+train_data <- dat[train_idx, ]
+test_data <- dat[-train_idx, ]
+
+# Fit logistic regression model
+glm_probs <-  glm(formula = credit_risk ~ ., family = "binomial", data = train_data)
+# Fit probit model
+probit <- glm(formula = credit_risk ~ ., family = binomial(link = "probit"), data = train_data)
+# Fit random forest model
+rf_model <- randomForest(credit_risk ~ ., data = train_data)
+#Best Model
+
+best<-  glm(formula = credit_risk ~ status_less_than_0_DM + status_less_than_200_DM + 
+    status_greater_than_200_DM + duration + credit_history_nocredits + 
+    credit_history_existingcredits_paidback + 
+    purpose_newcar + purpose_usedcar + purpose_furniture + purpose_vacation + 
+    purpose_retrain + purpose_bus + amount + savings_lessthan_1000DM + 
+    savings_greaterthan_1000DM + employed_lessthan_7yr + installment_20_25 + 
+    installment_lessthan_20y + personal_status_male_married + 
+    otherdebtors_guarantor + presres_less_4 + instplan_none + 
+    housing_rent + foreign_worker + amount:duration +  credit_history_all_paidback:age + purpose_newcar:amount + status_less_than_0_DM:savings_none, family = "binomial", data = df11)
+
+
+
+# Make predictions on test set
+glm_probs <- predict(glm_probs, newdata = test_data, type = "response")
+rf_probs <- predict(rf_model, newdata = test_data, type = "prob")[, 2]
+probit_probs <- predict(probit, newdata = test_data, type = "response")
+best_probs <- predict(best, newdata = df11, type = "response")
+
+
+
+
+# Calculate TPR and FPR for different probability thresholds
+glm_roc_test <- roc(test_data$credit_risk, glm_probs)
+rf_roc <- roc(test_data$credit_risk, rf_probs)
+probit_roc <- roc(test_data$credit_risk, probit_probs)
+best_probs_roc <- roc(df11$credit_risk, best_probs)
+
+#
+
+# Plot ROC curves
+plot(best_probs_roc, col = "blue", main = "ROC Analysis", print.auc = TRUE, legacy.axes = TRUE)
+plot(rf_roc, col = "green", add = TRUE, print.auc = FALSE, legacy.axes = TRUE)
+plot(probit_roc, col = "yellow", add = TRUE, print.auc = FALSE, legacy.axes = TRUE)
+plot(glm_roc_test, col = "red", add = TRUE, print.auc = FALSE, legacy.axes = TRUE)
+```
+Comment: We have now tested our model with other three different models like probit regression, random forest, and logistic regression without feature selection. After we finished training our model on the training data, then we evaluated the model performance by applying them on the data they have never seen before: testing data. From the result, we concluded that out best model is the best one!
+
+
+
+# Referance
+
+https://www.r-bloggers.com/2013/08/residuals-from-a-logistic-regression/
+
+
+
